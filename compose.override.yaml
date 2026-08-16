@@ -1,0 +1,28 @@
+services:
+  depth:
+    build:
+      context: ./depth
+      dockerfile: Dockerfile
+    image: robot_sensors-depth:latest
+    container_name: stereo-depth
+    network_mode: host
+    ipc: host
+    privileged: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+    depends_on:
+      camera:
+        condition: service_started
+
+    environment:
+      ROS_DOMAIN_ID: "0"
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      FASTRTPS_DEFAULT_PROFILES_FILE: /config/fastdds/udp_only.xml
+      FASTDDS_DEFAULT_PROFILES_FILE: /config/fastdds/udp_only.xml
+      FASTDDS_BUILTIN_TRANSPORTS: UDPv4
+
+    volumes:
+      - /dev:/dev
+      - /sys:/sys
+      - ./fastdds/udp_only.xml:/config/fastdds/udp_only.xml:ro

@@ -1,0 +1,48 @@
+# 기존 설정 백업
+backup/
+*.before_*
+compose.yaml.before_depth
+
+# ROS 2 / colcon 생성물
+build/
+install/
+log/
+
+# ROS bag 및 센서 기록 데이터
+rosbag2_*/
+*.db3
+*.mcap
+*.bag
+
+# 실행 로그 및 임시 파일
+*.log
+*.tmp
+*.temp
+*.swp
+*~
+
+# Python 생성물
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 환경변수 및 비밀정보
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# IDE 설정
+.vscode/
+.idea/
+
+# 운영체제 생성물
+.DS_Store
+Thumbs.db
+
+# 카메라·Depth 저장 결과
+output/
+outputs/
+captures/
+recordings/

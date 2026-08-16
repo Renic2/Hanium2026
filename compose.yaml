@@ -1,0 +1,93 @@
+services:
+  lidar:
+    build:
+      context: ./lidar
+
+    container_name: rplidar
+    restart: unless-stopped
+
+    network_mode: host
+
+    environment:
+      ROS_DOMAIN_ID: "0"
+      RMW_IMPLEMENTATION: "rmw_fastrtps_cpp"
+      FASTRTPS_DEFAULT_PROFILES_FILE: "/config/udp_only.xml"
+      FASTDDS_DEFAULT_PROFILES_FILE: "/config/udp_only.xml"
+      FASTDDS_BUILTIN_TRANSPORTS: "UDPv4"
+
+    volumes:
+      - ./fastdds/udp_only.xml:/config/udp_only.xml:ro
+
+    devices:
+      - /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0:/dev/rplidar
+
+    command:
+      - ros2
+      - launch
+      - rplidar_ros
+      - rplidar_a1_launch.py
+      - serial_port:=/dev/rplidar
+      - serial_baudrate:=115200
+      - frame_id:=laser_frame
+      - inverted:=false
+      - angle_compensate:=true
+      - scan_mode:=Standard
+
+  camera:
+    build:
+      context: ./camera
+
+    container_name: stereo-camera
+    restart: unless-stopped
+
+    privileged: true
+    network_mode: host
+    ipc: host
+
+    environment:
+      ROS_DOMAIN_ID: "0"
+      RMW_IMPLEMENTATION: "rmw_fastrtps_cpp"
+      FASTRTPS_DEFAULT_PROFILES_FILE: "/config/udp_only.xml"
+      FASTDDS_DEFAULT_PROFILES_FILE: "/config/udp_only.xml"
+      FASTDDS_BUILTIN_TRANSPORTS: "UDPv4"
+
+    volumes:
+      - ./fastdds/udp_only.xml:/config/udp_only.xml:ro
+      - /dev:/dev
+      - /sys:/sys
+      - /run/udev:/run/udev:ro
+
+    command:
+      - ros2
+      - run
+      - mipi_cam
+      - mipi_cam
+      - --ros-args
+      - -p
+      - device_mode:=dual
+      - -p
+      - dual_combine:=1
+      - -p
+      - image_width:=640
+      - -p
+      - image_height:=352
+      - -p
+      - framerate:=10.0
+      - -p
+      - out_format:=nv12
+      - -p
+      - channel:=2
+      - -p
+      - channel2:=0
+      - -p
+      - rotation:=0.0
+      - -p
+      - cal_rotation:=0.0
+      - -p
+      - gdc_enable:=true
+      - -p
+      - lpwm_enable:=true
+      - -p
+      - frame_ts_type:=realtime
+      - --log-level
+      - warn
