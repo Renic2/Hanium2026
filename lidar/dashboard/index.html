@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RDK-X5 Sensor Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">RDK-X5 · ROS 2 Humble</p>
+        <h1>Sensor Dashboard</h1>
+      </div>
+      <div class="connection-wrap">
+        <span id="connectionDot" class="status-dot offline"></span>
+        <div>
+          <strong id="connectionText">ROSBridge 연결 중</strong>
+          <small id="connectionDetail">ws://localhost:9090</small>
+        </div>
+      </div>
+    </header>
+
+    <main class="dashboard-grid">
+      <section class="card camera-card">
+        <div class="card-header">
+          <div><p class="section-kicker">VISION</p><h2>카메라</h2></div>
+          <div class="header-controls">
+            <select id="cameraTopic" aria-label="카메라 선택">
+              <option value="/image_left_raw">왼쪽 카메라</option>
+              <option value="/image_right_raw">오른쪽 카메라</option>
+            </select>
+            <span id="cameraRate" class="metric-pill">대기 중</span>
+          </div>
+        </div>
+        <div class="canvas-shell image-shell">
+          <canvas id="cameraCanvas" width="640" height="352"></canvas>
+          <div id="cameraEmpty" class="empty-state">카메라 프레임 대기 중</div>
+        </div>
+        <div class="card-footer"><span id="cameraInfo">NV12 · 640×352</span><span id="cameraAge">—</span></div>
+      </section>
+
+      <section class="card depth-card">
+        <div class="card-header">
+          <div><p class="section-kicker">STEREO DEPTH</p><h2>Depth</h2></div>
+          <span id="depthRate" class="metric-pill">대기 중</span>
+        </div>
+        <div class="canvas-shell image-shell">
+          <canvas id="depthCanvas" width="640" height="352"></canvas>
+          <div id="depthEmpty" class="empty-state">Depth 프레임 대기 중</div>
+          <div class="depth-readout"><strong id="centerDepth">—</strong><small>중앙 거리</small></div>
+        </div>
+        <div class="range-controls">
+          <label>표시 최소 <input id="depthMin" type="number" value="150" min="0" max="10000" step="50" /> mm</label>
+          <div class="depth-gradient" aria-hidden="true"></div>
+          <label>표시 최대 <input id="depthMax" type="number" value="4000" min="100" max="20000" step="100" /> mm</label>
+        </div>
+        <div class="card-footer"><span id="depthInfo">MONO16 · millimetres</span><span id="depthStats">—</span></div>
+      </section>
+
+      <section class="card imu-card">
+        <div class="card-header">
+          <div><p class="section-kicker">UART2 · EBIMU</p><h2>IMU</h2></div>
+          <span id="imuRate" class="metric-pill">대기 중</span>
+        </div>
+        <div class="imu-values">
+          <div><small>Roll</small><strong id="rollValue">—</strong></div>
+          <div><small>Pitch</small><strong id="pitchValue">—</strong></div>
+          <div><small>Yaw</small><strong id="yawValue">—</strong></div>
+          <div><small>|Accel|</small><strong id="accelNorm">—</strong></div>
+        </div>
+        <div class="chart-block"><div class="chart-title"><span>각속도</span><small>rad/s</small></div><canvas id="gyroChart" width="760" height="160"></canvas></div>
+        <div class="chart-block"><div class="chart-title"><span>선형 가속도</span><small>m/s²</small></div><canvas id="accelChart" width="760" height="160"></canvas></div>
+        <div class="axis-legend"><span><i class="axis-x"></i>X</span><span><i class="axis-y"></i>Y</span><span><i class="axis-z"></i>Z</span></div>
+      </section>
+
+      <section class="card map-card">
+        <div class="card-header">
+          <div><p class="section-kicker">SLAM TOOLBOX</p><h2>LiDAR 2D Mapping</h2></div>
+          <div class="header-controls"><span id="scanRate" class="metric-pill">LiDAR 대기</span><span id="mapRate" class="metric-pill">Map 대기</span></div>
+        </div>
+        <div class="canvas-shell map-shell">
+          <canvas id="mapCanvas" width="760" height="520"></canvas>
+          <div id="mapEmpty" class="empty-state">OccupancyGrid 대기 중</div>
+          <div class="map-legend">
+            <span><i class="free-cell"></i>이동 가능</span><span><i class="occupied-cell"></i>장애물</span>
+            <span><i class="scan-point"></i>현재 스캔</span><span><i class="robot-point"></i>로봇</span>
+          </div>
+        </div>
+        <div class="card-footer"><span id="mapInfo">map frame · 0.05 m/cell</span><span id="scanInfo">—</span></div>
+      </section>
+    </main>
+
+    <footer><span>카메라 · Depth · UART2 IMU · RPLIDAR</span><span id="lastUpdate">마지막 수신: —</span></footer>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

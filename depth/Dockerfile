@@ -1,4 +1,4 @@
-FROM robot_sensors-camera:latest
+FROM robot_sensors-camera:2.4.0-stable
 
 ENV DEBIAN_FRONTEND=noninteractive
 

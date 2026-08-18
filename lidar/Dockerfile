@@ -2,15 +2,19 @@ FROM ros:humble-ros-base
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ros-humble-rplidar-ros && \
+        ros-humble-rplidar-ros \
+        ros-humble-slam-toolbox \
+        ros-humble-foxglove-bridge \
+        ros-humble-rosbridge-server \
+        ros-humble-tf2-ros && \
     rm -rf /var/lib/apt/lists/*
 
-ENTRYPOINT ["/ros_entrypoint.sh"]
+COPY entrypoint.sh /mapping_entrypoint.sh
+COPY healthcheck.sh /mapping_healthcheck.sh
+COPY slam_params.yaml /config/slam_params.yaml
+COPY dashboard_server.py /dashboard_server.py
+COPY dashboard /dashboard
 
-CMD ["ros2", "launch", "rplidar_ros", "rplidar_a1_launch.py", \
-     "serial_port:=/dev/rplidar", \
-     "serial_baudrate:=115200", \
-     "frame_id:=laser_frame", \
-     "inverted:=false", \
-     "angle_compensate:=true", \
-     "scan_mode:=Standard"]
+RUN chmod +x /mapping_entrypoint.sh /mapping_healthcheck.sh /dashboard_server.py
+
+ENTRYPOINT ["/mapping_entrypoint.sh"]

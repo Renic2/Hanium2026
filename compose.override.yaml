@@ -3,7 +3,7 @@ services:
     build:
       context: ./depth
       dockerfile: Dockerfile
-    image: robot_sensors-depth:latest
+    image: robot_sensors-depth:2.5.5-stable
     container_name: stereo-depth
     network_mode: host
     ipc: host
@@ -13,7 +13,7 @@ services:
 
     depends_on:
       camera:
-        condition: service_started
+        condition: service_healthy
 
     environment:
       ROS_DOMAIN_ID: "0"
@@ -26,3 +26,21 @@ services:
       - /dev:/dev
       - /sys:/sys
       - ./fastdds/udp_only.xml:/config/fastdds/udp_only.xml:ro
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -lc 'source /opt/tros/humble/setup.bash && timeout 8s ros2 topic
+          echo --no-daemon --spin-time 2 --once /StereoNetNode/stereonet_depth
+          sensor_msgs/msg/Image --field header >/dev/null'
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
