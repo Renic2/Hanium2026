@@ -15,7 +15,7 @@ timeout 8s ros2 topic echo \
 
 pgrep -f '/opt/ros/humble/lib/foxglove_bridge/foxglove_bridge' >/dev/null
 pgrep -f 'rosbridge_websocket.*__node:=rosbridge_telemetry' >/dev/null
-pgrep -f 'rosbridge_websocket.*__node:=rosbridge_images' >/dev/null
+pgrep -f '/image_stream_server.py' >/dev/null
 
 python3 - <<'PY'
 import socket

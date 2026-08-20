@@ -56,6 +56,11 @@ Keep this window open and browse to http://localhost:8080/...
 - 180도 회전된 컬러 Depth 영상
 - `/imu/left/data_calibrated` 기반 roll, pitch, yaw, 각속도, 가속도
 - `/scan`과 `/map`을 이용한 LiDAR 기반 2D 매핑 화면
+- 페이지 최상단의 RDK-X5 CPU, RAM, 1분 load와 온도
+
+카메라와 Depth 카드의 주기는 `ROS 원본 Hz · 표시 Hz` 순서입니다. 영상
+원본은 약 10 Hz로 유지하고, 호스트 전송은 CPU와 네트워크 부하를 일정하게
+유지하기 위해 raw binary 최신 프레임을 각각 2 Hz로 고정합니다.
 
 별도의 Foxglove 패널 설정이나 호스트 ROS 2 설치는 필요하지 않습니다.
 
@@ -166,6 +171,14 @@ RDK-X5에서 IMU 컨테이너가 막 시작되었다면 보정 완료까지 약 
 `localhost:19093` 연결을 확인하고 `Ctrl+F5`로 새로고침합니다. 영상은
 텔레메트리와 다른 ROSBridge 포트를 사용하므로 IMU와 맵이 보여도 영상 포트만
 끊어질 수 있습니다.
+
+### 카메라 또는 Depth Hz가 낮거나 흔들림
+
+카드에서 `표시` 값만 약 `2.0 Hz`이면 정상입니다. 호스트 화면은 원본 전체를
+전송하지 않고 최신 프레임을 고정 2 Hz로 표시합니다. `ROS` 값이 지속적으로
+9 Hz 아래로 내려가면서 상단 CPU가 높거나 load가 8 cores에 가까우면 RDK-X5의
+실제 처리 부하가 높은 상태입니다. 다른 Foxglove 영상 구독이나 불필요한
+subscriber를 닫고 다시 확인합니다.
 
 ## 7. Foxglove를 사용하고 싶을 때
 

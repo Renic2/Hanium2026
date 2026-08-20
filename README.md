@@ -382,13 +382,14 @@ map_sub = node.create_subscription(
 저장을 직접 수행하지 말고 bounded queue와 worker를 사용해 DDS 수신을 막지
 않도록 합니다.
 
-### 8. Windows 호스트에서 ROSBridge로 받기
+### 8. Windows 호스트에서 WebSocket으로 받기
 
 먼저 `host_view/start_dashboard.ps1`을 실행해 SSH 터널을 엽니다. 대역폭이 큰
 영상이 다른 센서 연결을 막지 않도록 포트가 분리되어 있습니다.
 
-- `ws://localhost:19092`: IMU, `/scan`, `/map`, `/pose`, `/tf`, `/tf_static`
-- `ws://localhost:19093`: 카메라와 Depth
+- `ws://localhost:19092`: 표준 ROSBridge JSON으로 IMU, `/scan`, `/map`,
+  `/pose`, `/tf`, `/tf_static`
+- `ws://localhost:19093`: 카메라와 Depth 전용 raw binary WebSocket
 
 ```javascript
 const telemetry = new WebSocket("ws://localhost:19092");
@@ -412,29 +413,46 @@ telemetry.addEventListener("message", (event) => {
 });
 ```
 
-영상은 별도 socket에서 낮은 속도로 구독합니다. ROSBridge JSON에서는 Image의
-`data`가 base64 문자열로 오므로 브라우저에서는 `atob`, Python에서는
-`base64.b64decode` 후 위의 NV12/mono16 방식으로 해석합니다.
+영상 포트는 ROSBridge의 Image JSON/base64 변환 부하를 제거하기 위해 전용
+binary protocol을 사용합니다. 기본 대시보드는 ROS 원본 주기를 측정하면서
+최신 카메라와 Depth 프레임을 각각 정확한 목표 `2 Hz` 간격으로 보냅니다.
+따라서 카드의 `ROS 9.8 · 표시 2.0 Hz`에서 앞 숫자는 RDK-X5의 실제 토픽
+주기이고 뒤 숫자는 호스트 화면 전송 주기입니다.
 
 ```javascript
 const images = new WebSocket("ws://localhost:19093");
+images.binaryType = "arraybuffer";
 
 images.addEventListener("open", () => {
   images.send(JSON.stringify({
     op: "subscribe",
     id: "left-camera",
     topic: "/image_left_raw",
-    throttle_rate: 500,
-    queue_length: 1,
+    rate_hz: 2,
   }));
+});
+
+images.addEventListener("message", (event) => {
+  if (typeof event.data === "string") return; // ready 메시지
+  const view = new DataView(event.data);
+  const headerLength = view.getUint32(0, true);
+  const headerBytes = new Uint8Array(event.data, 4, headerLength);
+  const header = JSON.parse(new TextDecoder().decode(headerBytes));
+  const imageBytes = new Uint8Array(event.data, 4 + headerLength);
+  console.log(header.topic, header.source_hz, header.encoding, imageBytes);
 });
 ```
 
-카메라와 Depth를 같은 bridge에서 과도한 속도로 요청하면 JSON 직렬화 비용이
-큽니다. 기본 권장값은 카메라 `throttle_rate: 500`(약 2 FPS), Depth
-`750`(약 1.3 FPS), `queue_length: 1`입니다. 페이지나 프로그램을 종료하기
+binary frame은 `little-endian uint32 header_length`, UTF-8 JSON header,
+원본 Image payload 순서입니다. 허용 topic은 왼쪽/오른쪽 카메라와 Depth이며
+`rate_hz`는 `0.5..4.0` 범위로 제한됩니다. 페이지나 프로그램을 종료하기
 전에는 같은 `id`와 `topic`으로 `op: "unsubscribe"`를 보내고 WebSocket을
-정상 종료합니다.
+정상 종료합니다. 일반 ROSBridge Image 형식이 필요한 프로그램은 Foxglove
+Bridge 또는 RDK-X5 내부의 ROS 2 subscriber를 사용하십시오.
+
+대시보드 상단의 RDK-X5 CPU, RAM, 1분 load와 최대 온도는 같은 HTTP 터널의
+`http://localhost:8080/api/resources`에서 2초마다 읽습니다. 이 endpoint는
+JSON을 반환하며 브라우저 밖의 상태 모니터에서도 사용할 수 있습니다.
 
 ### 9. 토픽을 rosbag으로 저장하기
 

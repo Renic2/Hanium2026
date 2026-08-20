@@ -3,7 +3,7 @@ services:
     build:
       context: ./lidar
 
-    image: robot_sensors-lidar:1.2.1-imu-calibrated
+    image: robot_sensors-lidar:1.3.0-binary-stream
 
     container_name: rplidar
     restart: unless-stopped

@@ -12,6 +12,18 @@
         <p class="eyebrow">RDK-X5 · ROS 2 Humble</p>
         <h1>Sensor Dashboard</h1>
       </div>
+      <section class="resource-strip" aria-label="RDK-X5 리소스 사용량">
+        <div class="resource-item">
+          <span><small>CPU</small><strong id="cpuUsage">—</strong></span>
+          <i><b id="cpuBar"></b></i>
+        </div>
+        <div class="resource-item">
+          <span><small>RAM</small><strong id="memoryUsage">—</strong></span>
+          <i><b id="memoryBar"></b></i>
+        </div>
+        <div class="resource-item compact"><small>LOAD 1m</small><strong id="loadUsage">—</strong></div>
+        <div class="resource-item compact"><small>온도</small><strong id="temperatureUsage">—</strong></div>
+      </section>
       <div class="connection-wrap">
         <span id="connectionDot" class="status-dot offline"></span>
         <div>
@@ -30,7 +42,7 @@
               <option value="/image_left_raw">왼쪽 카메라</option>
               <option value="/image_right_raw">오른쪽 카메라</option>
             </select>
-            <span id="cameraRate" class="metric-pill">대기 중</span>
+            <span id="cameraRate" class="metric-pill">ROS — · 표시 —</span>
           </div>
         </div>
         <div class="canvas-shell image-shell">
@@ -43,7 +55,7 @@
       <section class="card depth-card">
         <div class="card-header">
           <div><p class="section-kicker">STEREO DEPTH</p><h2>Depth</h2></div>
-          <span id="depthRate" class="metric-pill">대기 중</span>
+          <span id="depthRate" class="metric-pill">ROS — · 표시 —</span>
         </div>
         <div class="canvas-shell image-shell">
           <canvas id="depthCanvas" width="640" height="352"></canvas>

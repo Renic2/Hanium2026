@@ -52,9 +52,8 @@ ros2 launch foxglove_bridge foxglove_bridge_launch.xml \
     capabilities:='[services,connectionGraph,assets]' &
 child_pids+=("$!")
 
-# Keep high-bandwidth camera/depth serialization separate from IMU, scan, map,
-# and TF traffic. A slow image client can no longer block the dashboard's main
-# connection handshake. Both bridges remain loopback-only.
+# Keep telemetry on rosbridge. Camera/depth use a purpose-built binary stream
+# below so Python JSON/base64 serialization cannot consume multiple CPU cores.
 ros2 run rosbridge_server rosbridge_websocket --ros-args \
     -r __node:=rosbridge_telemetry \
     -p address:=127.0.0.1 \
@@ -65,31 +64,23 @@ ros2 run rosbridge_server rosbridge_websocket --ros-args \
 rosbridge_telemetry_pid="$!"
 child_pids+=("${rosbridge_telemetry_pid}")
 
-ros2 run rosbridge_server rosbridge_websocket --ros-args \
-    -r __node:=rosbridge_images \
-    -p address:=127.0.0.1 \
-    -p port:=9093 \
-    -p unregister_timeout:=2.0 \
-    -p websocket_ping_interval:=10.0 \
-    -p websocket_ping_timeout:=5.0 &
-rosbridge_images_pid="$!"
-child_pids+=("${rosbridge_images_pid}")
+python3 /image_stream_server.py &
+image_stream_pid="$!"
+child_pids+=("${image_stream_pid}")
 
 python3 /dashboard_server.py &
 child_pids+=("$!")
 
-# A disconnected raw-image client can make Humble rosbridge retain large
-# serialization buffers. Restart the managed container before that leak can
-# starve new WebSocket handshakes; Docker's unless-stopped policy brings the
-# complete mapping service back automatically.
+# Keep the telemetry bridge bounded. Image transport is raw binary and does not
+# allocate rosbridge JSON/base64 buffers.
 watch_rosbridge_memory() {
-    while kill -0 "${rosbridge_telemetry_pid}" 2>/dev/null || kill -0 "${rosbridge_images_pid}" 2>/dev/null; do
-        bridge_pids="$(pgrep -d, -f '/rosbridge_server/rosbridge_websocket' || true)"
+    while kill -0 "${rosbridge_telemetry_pid}" 2>/dev/null && kill -0 "${image_stream_pid}" 2>/dev/null; do
+        bridge_pids="$(pgrep -d, -f 'rosbridge_websocket.*__node:=rosbridge_telemetry' || true)"
         if [[ -n "${bridge_pids}" ]]; then
             bridge_rss_kib="$(ps -o rss= -p "${bridge_pids}" 2>/dev/null | awk '{ total += $1 } END { print total + 0 }')"
-            if [[ "${bridge_rss_kib}" =~ ^[0-9]+$ ]] && (( bridge_rss_kib > 786432 )); then
-                echo "[mapping] combined rosbridge RSS ${bridge_rss_kib} KiB exceeded 768 MiB; restarting container" >&2
-                kill "${rosbridge_telemetry_pid}" "${rosbridge_images_pid}" 2>/dev/null || true
+            if [[ "${bridge_rss_kib}" =~ ^[0-9]+$ ]] && (( bridge_rss_kib > 262144 )); then
+                echo "[mapping] telemetry rosbridge RSS ${bridge_rss_kib} KiB exceeded 256 MiB; restarting container" >&2
+                kill "${rosbridge_telemetry_pid}" 2>/dev/null || true
                 return 1
             fi
         fi

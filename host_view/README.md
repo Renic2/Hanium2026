@@ -22,8 +22,11 @@ Set-ExecutionPolicy -Scope Process Bypass
 그다음 Chrome에서 <http://localhost:8080>을 엽니다. 카메라, 컬러 Depth,
 UART2 IMU 그래프, LiDAR 2D 맵이 한 화면에 자동으로 나타납니다.
 스크립트는 텔레메트리용 `19092`와 영상용 `19093`을 서로 분리해 전달합니다.
-카메라/Depth 직렬화가 IMU·LiDAR·맵 연결을 막지 않으며, 다른 개발 도구가
-흔히 사용하는 호스트 `9090`과도 충돌하지 않습니다.
+영상 포트는 JSON/base64 대신 저부하 raw binary와 고정 2 Hz 최신 프레임
+전송을 사용합니다. 카메라/Depth 직렬화가 IMU·LiDAR·맵 연결을 막지 않으며,
+다른 개발 도구가 흔히 사용하는 호스트 `9090`과도 충돌하지 않습니다.
+페이지 최상단에는 RDK-X5의 CPU, RAM, load와 온도가 표시되고, 카메라·Depth
+카드에는 ROS 원본 Hz와 호스트 표시 Hz가 구분되어 나타납니다.
 
 각 ROS 2 토픽의 메시지 타입, QoS, 필드 단위, Python/OpenCV 처리 예제와
 ROSBridge 구독 JSON은 루트 [README의 센서 토픽 가져오기와 처리 방법](../README.md#센서-토픽-가져오기와-처리-방법)을

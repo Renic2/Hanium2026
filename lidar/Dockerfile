@@ -13,8 +13,9 @@ COPY entrypoint.sh /mapping_entrypoint.sh
 COPY healthcheck.sh /mapping_healthcheck.sh
 COPY slam_params.yaml /config/slam_params.yaml
 COPY dashboard_server.py /dashboard_server.py
+COPY image_stream_server.py /image_stream_server.py
 COPY dashboard /dashboard
 
-RUN chmod +x /mapping_entrypoint.sh /mapping_healthcheck.sh /dashboard_server.py
+RUN chmod +x /mapping_entrypoint.sh /mapping_healthcheck.sh /dashboard_server.py /image_stream_server.py
 
 ENTRYPOINT ["/mapping_entrypoint.sh"]

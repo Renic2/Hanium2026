@@ -7,6 +7,7 @@ const rosbridgePort = query.get("rosbridgePort") || "19092";
 const imageBridgePort = query.get("imageBridgePort") || "19093";
 const ROSBRIDGE_URL = `ws://${host}:${rosbridgePort}`;
 const IMAGEBRIDGE_URL = `ws://${host}:${imageBridgePort}`;
+const IMAGE_DISPLAY_RATE_HZ = 2;
 const colors = ["#ff6b7d", "#5ee09a", "#5ca8ff"];
 
 const state = {
@@ -55,8 +56,8 @@ function unsubscribe(id, topic) {
   send({ op: "unsubscribe", id, topic });
 }
 
-function subscribeImage(id, topic, throttleRate = 0) {
-  sendImage({ op: "subscribe", id, topic, throttle_rate: throttleRate, queue_length: 1, compression: "none" });
+function subscribeImage(id, topic, rateHz = IMAGE_DISPLAY_RATE_HZ) {
+  sendImage({ op: "subscribe", id, topic, rate_hz: rateHz });
 }
 
 function unsubscribeImage(id, topic) {
@@ -75,8 +76,8 @@ function subscriptionPlan() {
 
 function imageSubscriptionPlan() {
   return [
-    [0, "camera", state.cameraTopic, 500],
-    [300, "depth", "/StereoNetNode/stereonet_depth", 750],
+    [0, "camera", state.cameraTopic, IMAGE_DISPLAY_RATE_HZ],
+    [150, "depth", "/StereoNetNode/stereonet_depth", IMAGE_DISPLAY_RATE_HZ],
   ];
 }
 
@@ -123,6 +124,28 @@ function handleSocketMessage(event) {
   state.lastMessageAt = performance.now();
   $("lastUpdate").textContent = `마지막 수신: ${new Date().toLocaleTimeString("ko-KR")}`;
   routeMessage(envelope.topic, envelope.msg);
+}
+
+function handleImageSocketMessage(event) {
+  if (typeof event.data === "string") return;
+  if (!(event.data instanceof ArrayBuffer) || event.data.byteLength < 5) return;
+  const view = new DataView(event.data);
+  const headerLength = view.getUint32(0, true);
+  if (!headerLength || headerLength + 4 > event.data.byteLength) return;
+  let header;
+  try {
+    header = JSON.parse(new TextDecoder().decode(new Uint8Array(event.data, 4, headerLength)));
+  } catch (_error) { return; }
+  const dataOffset = 4 + headerLength;
+  const message = {
+    ...header,
+    header: { frame_id: header.frame_id || "", stamp: header.stamp || {} },
+    data: new Uint8Array(event.data, dataOffset),
+  };
+  state.lastMessageAt = performance.now();
+  $("lastUpdate").textContent = `마지막 수신: ${new Date().toLocaleTimeString("ko-KR")}`;
+  if (header.topic === state.cameraTopic) handleCamera(message);
+  else if (header.topic === "/StereoNetNode/stereonet_depth") handleDepth(message);
 }
 
 function scheduleReconnect(socket) {
@@ -192,6 +215,7 @@ function connectImages() {
   clearTimeout(state.imageReconnectTimer);
   clearTimeout(state.imageConnectTimer);
   const socket = new WebSocket(IMAGEBRIDGE_URL);
+  socket.binaryType = "arraybuffer";
   state.imageSocket = socket;
   state.imageConnectTimer = setTimeout(() => {
     if (state.imageSocket !== socket || socket.readyState !== WebSocket.CONNECTING) return;
@@ -206,12 +230,12 @@ function connectImages() {
     setConnection("online", "로봇 연결됨", "텔레메트리 · 영상 연결됨");
     subscribeImages();
   });
-  socket.addEventListener("message", handleSocketMessage);
+  socket.addEventListener("message", handleImageSocketMessage);
   socket.addEventListener("close", () => scheduleImageReconnect(socket));
   socket.addEventListener("error", () => socket.close());
 }
 
-function noteRate(key, elementId, label = "") {
+function noteRate(key, elementId = null, label = "") {
   const now = performance.now();
   const samples = state.rates.get(key) || [];
   samples.push(now);
@@ -219,8 +243,10 @@ function noteRate(key, elementId, label = "") {
   state.rates.set(key, samples);
   if (samples.length > 1) {
     const hz = ((samples.length - 1) * 1000) / (samples.at(-1) - samples[0]);
-    $(elementId).textContent = `${label}${hz.toFixed(1)} Hz`;
+    if (elementId) $(elementId).textContent = `${label}${hz.toFixed(1)} Hz`;
+    return hz;
   }
+  return null;
 }
 
 function routeMessage(topic, msg) {
@@ -248,7 +274,9 @@ function clamp8(value) { return value < 0 ? 0 : value > 255 ? 255 : value; }
 
 function handleCamera(msg) {
   state.latestCamera = msg;
-  noteRate("camera", "cameraRate");
+  const displayHz = noteRate("camera");
+  const sourceHz = Number(msg.source_hz);
+  $("cameraRate").textContent = `ROS ${sourceHz ? sourceHz.toFixed(1) : "—"} · 표시 ${displayHz ? displayHz.toFixed(1) : "—"} Hz`;
   $("cameraInfo").textContent = `${String(msg.encoding || "unknown").toUpperCase()} · ${msg.width}×${msg.height}`;
   $("cameraAge").textContent = `${state.cameraTopic.includes("left") ? "LEFT" : "RIGHT"} · 180°`;
   if (!state.cameraRenderPending) {
@@ -309,7 +337,9 @@ function renderCamera() {
 
 function handleDepth(msg) {
   state.latestDepth = msg;
-  noteRate("depth", "depthRate");
+  const displayHz = noteRate("depth");
+  const sourceHz = Number(msg.source_hz);
+  $("depthRate").textContent = `ROS ${sourceHz ? sourceHz.toFixed(1) : "—"} · 표시 ${displayHz ? displayHz.toFixed(1) : "—"} Hz`;
   if (!state.depthRenderPending) {
     state.depthRenderPending = true;
     requestAnimationFrame(renderDepth);
@@ -508,9 +538,11 @@ $("cameraTopic").addEventListener("change", (event) => {
   const previous = state.cameraTopic;
   state.cameraTopic = event.target.value;
   state.latestCamera = null;
+  state.rates.delete("camera");
+  $("cameraRate").textContent = "ROS — · 표시 —";
   $("cameraEmpty").classList.remove("hidden");
   unsubscribeImage("camera", previous);
-  subscribeImage("camera", state.cameraTopic, 500);
+  subscribeImage("camera", state.cameraTopic, IMAGE_DISPLAY_RATE_HZ);
 });
 $("depthMin").addEventListener("change", renderDepth);
 $("depthMax").addEventListener("change", renderDepth);
@@ -520,6 +552,33 @@ setInterval(() => {
     setConnection("connecting", "연결됨 · 센서 데이터 대기", ROSBRIDGE_URL);
   }
 }, 1000);
+
+function formatBytes(bytes) {
+  const gibibytes = Number(bytes) / (1024 ** 3);
+  return `${gibibytes.toFixed(1)} GiB`;
+}
+
+async function updateResources() {
+  try {
+    const response = await fetch("/api/resources", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const resources = await response.json();
+    const cpu = Number(resources.cpu_percent);
+    const memory = Number(resources.memory_percent);
+    $("cpuUsage").textContent = Number.isFinite(cpu) ? `${cpu.toFixed(1)}%` : "측정 중";
+    $("cpuBar").style.width = `${Math.max(0, Math.min(100, cpu || 0))}%`;
+    $("memoryUsage").textContent = `${formatBytes(resources.memory_used_bytes)} / ${formatBytes(resources.memory_total_bytes)}`;
+    $("memoryBar").style.width = `${Math.max(0, Math.min(100, memory || 0))}%`;
+    $("loadUsage").textContent = `${Number(resources.load_1m).toFixed(2)} / ${resources.cpu_count} cores`;
+    const temperature = Number(resources.temperature_c);
+    $("temperatureUsage").textContent = Number.isFinite(temperature) ? `${temperature.toFixed(1)}°C` : "센서 없음";
+  } catch (_error) {
+    $("cpuUsage").textContent = "연결 대기";
+  }
+}
+
+updateResources();
+setInterval(updateResources, 2000);
 
 window.addEventListener("pagehide", () => {
   clearTimeout(state.connectTimer);
