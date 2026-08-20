@@ -21,6 +21,8 @@ REQUIRED_STREAMS = {
     "/image_combine_raw": Image,
     "/imu/left/data_raw": Imu,
     "/imu/left/data": Imu,
+    "/imu/left/data_raw_calibrated": Imu,
+    "/imu/left/data_calibrated": Imu,
     "/StereoNetNode/stereonet_depth": Image,
     "/map": OccupancyGrid,
 }

@@ -9,6 +9,14 @@ import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Sequence, Tuple
 
+from calibration_math import (
+    CalibrationResult,
+    StationaryCalibrator,
+    quaternion_conjugate,
+    quaternion_multiply,
+    quaternion_normalize,
+    rotate_vector,
+)
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -28,6 +36,19 @@ class Sample:
     quaternion_xyzw: Tuple[float, float, float, float]
     angular_velocity_dps: Tuple[float, float, float]
     linear_acceleration_g: Tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class CalibrationSettings:
+    enabled: bool
+    output_frame_id: str
+    sample_count: int
+    gravity_mps2: float
+    yaw_deg: float
+    max_gyro_rad_s: float
+    accel_tolerance_mps2: float
+    max_gyro_stddev: float
+    max_accel_stddev: float
 
 
 def parse_packet(packet: bytes) -> Optional[Sample]:
@@ -82,6 +103,7 @@ class EbimuWorker:
         baudrate: int,
         stale_timeout_sec: float,
         configure_device: bool,
+        calibration: CalibrationSettings,
     ) -> None:
         self.node = node
         self.side = side
@@ -90,12 +112,32 @@ class EbimuWorker:
         self.baudrate = baudrate
         self.stale_timeout_sec = stale_timeout_sec
         self.configure_device = configure_device
+        self.calibration_settings = calibration
         self.raw_publisher = node.create_publisher(
             Imu, f"/imu/{side}/data_raw", qos_profile_sensor_data
         )
         self.data_publisher = node.create_publisher(
             Imu, f"/imu/{side}/data", qos_profile_sensor_data
         )
+        self.calibrated_raw_publisher = node.create_publisher(
+            Imu, f"/imu/{side}/data_raw_calibrated", qos_profile_sensor_data
+        )
+        self.calibrated_data_publisher = node.create_publisher(
+            Imu, f"/imu/{side}/data_calibrated", qos_profile_sensor_data
+        )
+        self.calibrator: Optional[StationaryCalibrator] = None
+        if calibration.enabled:
+            self.calibrator = StationaryCalibrator(
+                sample_count=calibration.sample_count,
+                gravity_mps2=calibration.gravity_mps2,
+                yaw_rad=math.radians(calibration.yaw_deg),
+                max_gyro_rad_s=calibration.max_gyro_rad_s,
+                accel_tolerance_mps2=calibration.accel_tolerance_mps2,
+                max_gyro_stddev=calibration.max_gyro_stddev,
+                max_accel_stddev=calibration.max_accel_stddev,
+            )
+        self._has_announced_calibration = False
+        self._next_calibration_progress = 100
         self._stop = threading.Event()
         self._serial_lock = threading.Lock()
         self._serial: Optional[serial.Serial] = None
@@ -260,17 +302,19 @@ class EbimuWorker:
             )
             self._has_announced_stream = True
         stamp = self.node.get_clock().now().to_msg()
+        angular_velocity = tuple(
+            component * DEG_TO_RAD for component in sample.angular_velocity_dps
+        )
+        linear_acceleration = tuple(
+            component * GRAVITY_MPS2 for component in sample.linear_acceleration_g
+        )
         raw_message = Imu()
         data_message = Imu()
         for message in (raw_message, data_message):
             message.header.stamp = stamp
             message.header.frame_id = self.frame_id
-            message.angular_velocity.x = sample.angular_velocity_dps[0] * DEG_TO_RAD
-            message.angular_velocity.y = sample.angular_velocity_dps[1] * DEG_TO_RAD
-            message.angular_velocity.z = sample.angular_velocity_dps[2] * DEG_TO_RAD
-            message.linear_acceleration.x = sample.linear_acceleration_g[0] * GRAVITY_MPS2
-            message.linear_acceleration.y = sample.linear_acceleration_g[1] * GRAVITY_MPS2
-            message.linear_acceleration.z = sample.linear_acceleration_g[2] * GRAVITY_MPS2
+            self._set_vector(message.angular_velocity, angular_velocity)
+            self._set_vector(message.linear_acceleration, linear_acceleration)
 
         # data_raw deliberately declares orientation unavailable.
         raw_message.orientation_covariance[0] = -1.0
@@ -283,6 +327,107 @@ class EbimuWorker:
 
         self.raw_publisher.publish(raw_message)
         self.data_publisher.publish(data_message)
+
+        if self.calibrator is None:
+            return
+        status = self.calibrator.add_sample(linear_acceleration, angular_velocity)
+        if status in ("rejected", "unstable"):
+            self._next_calibration_progress = 100
+            self._log_throttled(
+                "calibration_motion",
+                f"{self.side}: IMU calibration waiting; keep the robot level and "
+                "completely still",
+                interval=5.0,
+            )
+            return
+        if status == "collecting":
+            if self.calibrator.progress >= self._next_calibration_progress:
+                self.node.get_logger().info(
+                    f"{self.side}: IMU calibration {self.calibrator.progress}/"
+                    f"{self.calibration_settings.sample_count} stationary samples"
+                )
+                self._next_calibration_progress += 100
+            return
+
+        result = self.calibrator.result
+        if result is None:
+            return
+        if not self._has_announced_calibration:
+            self._announce_calibration(result)
+            self._has_announced_calibration = True
+        self._publish_calibrated(sample, stamp, result)
+
+    @staticmethod
+    def _set_vector(message_vector, values: Tuple[float, float, float]) -> None:
+        message_vector.x, message_vector.y, message_vector.z = values
+
+    @staticmethod
+    def _set_covariance(message_covariance, covariance) -> None:
+        for row in range(3):
+            for column in range(3):
+                message_covariance[row * 3 + column] = covariance[row][column]
+
+    def _announce_calibration(self, result: CalibrationResult) -> None:
+        qx, qy, qz, qw = result.base_from_sensor_xyzw
+        ax, ay, az = result.accel_mean_mps2
+        gx, gy, gz = result.gyro_bias_rad_s
+        self.node.get_logger().info(
+            f"{self.side}: IMU calibration complete; accel_mean_mps2="
+            f"[{ax:.5f}, {ay:.5f}, {az:.5f}], gyro_bias_rad_s="
+            f"[{gx:.6f}, {gy:.6f}, {gz:.6f}], base_from_sensor_xyzw="
+            f"[{qx:.7f}, {qy:.7f}, {qz:.7f}, {qw:.7f}], "
+            f"accel_scale={result.accel_scale:.7f}"
+        )
+
+    def _publish_calibrated(
+        self, sample: Sample, stamp, result: CalibrationResult
+    ) -> None:
+        native_gyro = tuple(
+            component * DEG_TO_RAD for component in sample.angular_velocity_dps
+        )
+        native_accel = tuple(
+            component * GRAVITY_MPS2 * result.accel_scale
+            for component in sample.linear_acceleration_g
+        )
+        corrected_gyro = rotate_vector(
+            result.base_from_sensor_xyzw,
+            tuple(
+                native_gyro[index] - result.gyro_bias_rad_s[index]
+                for index in range(3)
+            ),
+        )
+        corrected_accel = rotate_vector(result.base_from_sensor_xyzw, native_accel)
+
+        raw_message = Imu()
+        data_message = Imu()
+        for message in (raw_message, data_message):
+            message.header.stamp = stamp
+            message.header.frame_id = self.calibration_settings.output_frame_id
+            self._set_vector(message.angular_velocity, corrected_gyro)
+            self._set_vector(message.linear_acceleration, corrected_accel)
+            self._set_covariance(
+                message.angular_velocity_covariance, result.gyro_covariance
+            )
+            self._set_covariance(
+                message.linear_acceleration_covariance, result.accel_covariance
+            )
+
+        raw_message.orientation_covariance[0] = -1.0
+        calibrated_orientation = quaternion_normalize(
+            quaternion_multiply(
+                sample.quaternion_xyzw,
+                quaternion_conjugate(result.base_from_sensor_xyzw),
+            )
+        )
+        (
+            data_message.orientation.x,
+            data_message.orientation.y,
+            data_message.orientation.z,
+            data_message.orientation.w,
+        ) = calibrated_orientation
+
+        self.calibrated_raw_publisher.publish(raw_message)
+        self.calibrated_data_publisher.publish(data_message)
 
 
 class EbimuNode(Node):
@@ -297,6 +442,26 @@ class EbimuNode(Node):
         self.declare_parameter("baudrate", 115200)
         self.declare_parameter("stale_timeout_sec", 2.0)
         self.declare_parameter("configure_device", True)
+        for side in ("left", "right"):
+            self.declare_parameter(f"{side}.calibration.enabled", True)
+            self.declare_parameter(
+                f"{side}.calibration.output_frame_id", "base_link"
+            )
+            self.declare_parameter(f"{side}.calibration.sample_count", 300)
+            self.declare_parameter(
+                f"{side}.calibration.gravity_mps2", GRAVITY_MPS2
+            )
+            self.declare_parameter(f"{side}.calibration.yaw_deg", 0.0)
+            self.declare_parameter(f"{side}.calibration.max_gyro_rad_s", 0.2)
+            self.declare_parameter(
+                f"{side}.calibration.accel_tolerance_mps2", 1.5
+            )
+            self.declare_parameter(
+                f"{side}.calibration.max_gyro_stddev", 0.03
+            )
+            self.declare_parameter(
+                f"{side}.calibration.max_accel_stddev", 0.35
+            )
 
         baudrate = self.get_parameter("baudrate").value
         stale_timeout_sec = self.get_parameter("stale_timeout_sec").value
@@ -315,14 +480,42 @@ class EbimuNode(Node):
                 baudrate=baudrate,
                 stale_timeout_sec=stale_timeout_sec,
                 configure_device=configure_device,
+                calibration=self._calibration_settings(side),
             )
             self.workers.append(worker)
             worker.start()
             enabled_sides.append(side)
 
         self.get_logger().info(
-            f"EBIMU publisher started for {', '.join(enabled_sides)}; sensor axes "
-            "are published in each sensor frame without an assumed mounting rotation"
+            f"EBIMU publisher started for {', '.join(enabled_sides)}; native topics "
+            "are unchanged and calibrated base_link topics start after the stationary "
+            "sample window completes"
+        )
+
+    def _calibration_settings(self, side: str) -> CalibrationSettings:
+        prefix = f"{side}.calibration"
+        return CalibrationSettings(
+            enabled=bool(self.get_parameter(f"{prefix}.enabled").value),
+            output_frame_id=str(
+                self.get_parameter(f"{prefix}.output_frame_id").value
+            ),
+            sample_count=int(self.get_parameter(f"{prefix}.sample_count").value),
+            gravity_mps2=float(
+                self.get_parameter(f"{prefix}.gravity_mps2").value
+            ),
+            yaw_deg=float(self.get_parameter(f"{prefix}.yaw_deg").value),
+            max_gyro_rad_s=float(
+                self.get_parameter(f"{prefix}.max_gyro_rad_s").value
+            ),
+            accel_tolerance_mps2=float(
+                self.get_parameter(f"{prefix}.accel_tolerance_mps2").value
+            ),
+            max_gyro_stddev=float(
+                self.get_parameter(f"{prefix}.max_gyro_stddev").value
+            ),
+            max_accel_stddev=float(
+                self.get_parameter(f"{prefix}.max_accel_stddev").value
+            ),
         )
 
     def close(self) -> None:

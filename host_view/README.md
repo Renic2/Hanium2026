@@ -1,5 +1,8 @@
 # 호스트 PC에서 센서와 2D 맵 보기
 
+고정 웹 대시보드만 바로 실행하려면 별도 문서인
+[Windows 호스트 빠른 시작](../README_HOST_WINDOWS.md)을 참고하십시오.
+
 RDK-X5의 Foxglove Bridge는 보안을 위해 로봇 내부의
 `127.0.0.1:8765`에만 열립니다. Windows 호스트에서 SSH 터널을 연 뒤
 Foxglove WebSocket으로 접속하면 ROS 2를 호스트에 설치하지 않고도 볼 수
@@ -76,7 +79,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 2. 시작 화면의 `Open connection`을 누릅니다.
 3. 연결 형식에서 `Foxglove WebSocket`을 선택합니다.
 4. URL에 `ws://localhost:8765`를 입력하고 `Open`을 누릅니다.
-5. 왼쪽 `Topics` 목록에 `/image_left_raw`, `/imu/left/data`, `/scan`,
+5. 왼쪽 `Topics` 목록에 `/image_left_raw`, `/imu/left/data_calibrated`, `/scan`,
    `/map`이 보이면 연결된 것입니다.
 
 이제 아래 순서대로 패널을 하나씩 추가합니다. 패널 설정은 패널 오른쪽 위의
@@ -115,9 +118,9 @@ IMU는 각속도와 가속도를 두 개의 Plot 패널로 나누면 보기 쉽�
    추가합니다.
 
 ```text
-/imu/left/data.angular_velocity.x
-/imu/left/data.angular_velocity.y
-/imu/left/data.angular_velocity.z
+/imu/left/data_calibrated.angular_velocity.x
+/imu/left/data_calibrated.angular_velocity.y
+/imu/left/data_calibrated.angular_velocity.z
 ```
 
 ### 가속도
@@ -126,21 +129,21 @@ IMU는 각속도와 가속도를 두 개의 Plot 패널로 나누면 보기 쉽�
 2. 아래 세 개의 Y-value를 추가합니다.
 
 ```text
-/imu/left/data.linear_acceleration.x
-/imu/left/data.linear_acceleration.y
-/imu/left/data.linear_acceleration.z
+/imu/left/data_calibrated.linear_acceleration.x
+/imu/left/data_calibrated.linear_acceleration.y
+/imu/left/data_calibrated.linear_acceleration.z
 ```
 
 자세를 roll, pitch, yaw 그래프로 보고 싶으면 별도 Plot 패널에 다음 값을
 추가할 수 있습니다.
 
 ```text
-/imu/left/data.orientation.@rpy.roll
-/imu/left/data.orientation.@rpy.pitch
-/imu/left/data.orientation.@rpy.yaw
+/imu/left/data_calibrated.orientation.@rpy.roll
+/imu/left/data_calibrated.orientation.@rpy.pitch
+/imu/left/data_calibrated.orientation.@rpy.yaw
 ```
 
-중요: `/imu/left/data`까지가 토픽 이름이고, 그 뒤의 필드는 `/`가 아니라
+중요: `/imu/left/data_calibrated`까지가 토픽 이름이고, 그 뒤의 필드는 `/`가 아니라
 `.`으로 연결합니다.
 
 ## 7. LiDAR 기반 2D 맵 패널
@@ -188,8 +191,8 @@ Depth는 `mono16` 밀리미터 영상이며 카메라는 `nv12`입니다. 오른
 필요하면 `/image_right_raw`도 별도 `Image` 패널에 추가할 수 있습니다.
 
 현재 2D SLAM은 휠 오도메트리 없이 LiDAR 스캔 매칭으로 동작합니다. 로봇을
-천천히 움직이고 급회전을 피해야 지도가 안정적으로 확장됩니다. IMU는 같은
-화면에서 확인할 수 있지만, 실측 장착 회전값이 아직 없으므로 SLAM 자세에는
-임의로 융합하지 않았습니다.
+천천히 움직이고 급회전을 피해야 지도가 안정적으로 확장됩니다. IMU 패널은
+시작 시 3초간 정지 샘플로 장착축과 gyro bias가 보정된 `base_link` 토픽을
+표시합니다. SLAM에는 아직 IMU를 융합하지 않았습니다.
 
 터널을 닫으려면 터널 PowerShell 창에서 `Ctrl+C`를 누릅니다.

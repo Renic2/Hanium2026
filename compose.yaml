@@ -3,7 +3,7 @@ services:
     build:
       context: ./lidar
 
-    image: robot_sensors-lidar:1.2.0-dashboard
+    image: robot_sensors-lidar:1.2.1-imu-calibrated
 
     container_name: rplidar
     restart: unless-stopped
@@ -121,7 +121,7 @@ services:
     build:
       context: ./imu
 
-    image: robot_sensors-imu:1.0.2-stable
+    image: robot_sensors-imu:1.1.0-calibrated
     container_name: ebimu
     restart: unless-stopped
     init: true
@@ -148,6 +148,14 @@ services:
       - --ros-args
       - -p
       - right.enabled:=false
+      - -p
+      - left.calibration.enabled:=true
+      - -p
+      - left.calibration.output_frame_id:=base_link
+      - -p
+      - left.calibration.sample_count:=300
+      - -p
+      - left.calibration.yaw_deg:=0.0
 
     healthcheck:
       test:
@@ -155,12 +163,12 @@ services:
         - >-
           bash -lc 'source /opt/ros/humble/setup.bash && timeout 8s ros2 topic
           echo --no-daemon --spin-time 2 --qos-reliability best_effort --once
-          /imu/left/data
+          /imu/left/data_calibrated
           sensor_msgs/msg/Imu --field header >/dev/null'
       interval: 30s
       timeout: 12s
       retries: 3
-      start_period: 20s
+      start_period: 40s
 
     logging:
       driver: json-file

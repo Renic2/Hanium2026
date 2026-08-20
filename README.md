@@ -13,8 +13,9 @@ The merged Compose project contains exactly four services: `lidar`, `camera`,
 
 UART3/right IMU is intentionally disabled and is not a health requirement.
 
-The EBIMU node publishes each sensor's native axes. It does not guess a
-mounting transform; add the measured static transforms in the robot TF tree.
+The EBIMU node preserves the native sensor topics and also performs a startup
+stationary calibration. The calibrated topics rotate the vertically mounted
+sensor into `base_link`, remove the measured gyro zero bias, and retain gravity.
 
 ## Start and verify
 
@@ -25,6 +26,10 @@ docker compose up -d
 docker compose ps
 ```
 
+Place the robot on level ground and do not move it for at least 3 seconds after
+the `imu` service starts. Calibration deliberately waits and retries while the
+robot is moving.
+
 `depth` waits for the camera healthcheck to receive a real combined image.
 Every service uses `restart: unless-stopped`, a fixed local image tag, and
 rotating Docker logs (3 x 10 MB).
@@ -34,7 +39,8 @@ Expected live topics include:
 - `/scan` (`sensor_msgs/msg/LaserScan`)
 - `/image_left_raw`, `/image_right_raw`, `/image_combine_raw`
 - `/image_left_raw/camera_info`, `/image_right_raw/camera_info`
-- `/imu/left/data_raw`, `/imu/left/data`
+- `/imu/left/data_raw`, `/imu/left/data` (native sensor axes)
+- `/imu/left/data_raw_calibrated`, `/imu/left/data_calibrated` (`base_link` axes)
 - `/StereoNetNode/stereonet_depth` (`mono16`, millimetres)
 - `/map` (`nav_msgs/msg/OccupancyGrid`, 0.05 m resolution)
 
@@ -72,7 +78,7 @@ ros2 topic bw /scan
 # sensor-data QoS 예시
 ros2 topic echo --once \
   --qos-reliability best_effort --qos-durability volatile \
-  /imu/left/data sensor_msgs/msg/Imu
+  /imu/left/data_calibrated sensor_msgs/msg/Imu
 
 # map QoS 예시
 ros2 topic echo --once \
@@ -91,8 +97,10 @@ ros2 topic echo --once \
 | `/image_right_raw/camera_info` | `sensor_msgs/msg/CameraInfo` | 오른쪽 카메라 내부/외부 파라미터 | stereo calibration과 disparity에 사용 |
 | `/StereoNetNode/stereonet_depth` | `sensor_msgs/msg/Image`, 약 10 Hz | 640x352, little-endian `mono16`, 단위 mm | `uint16`로 해석하고 m로 변환 |
 | `/StereoNetNode/stereonet_depth/camera_info` | `sensor_msgs/msg/CameraInfo` | Depth 영상의 투영 파라미터 | Depth 픽셀을 3D 점으로 역투영 |
-| `/imu/left/data_raw` | `sensor_msgs/msg/Imu`, 약 100 Hz | quaternion 없음, rad/s, m/s² | 각속도·가속도 필터링용 |
-| `/imu/left/data` | `sensor_msgs/msg/Imu`, 약 100 Hz | 정규화 quaternion + rad/s + m/s² | 자세 계산과 센서 융합 입력 |
+| `/imu/left/data_raw` | `sensor_msgs/msg/Imu`, 약 100 Hz | `imu_left_link`, quaternion 없음, 센서 native 축 | 원본 측정값 점검과 재보정용 |
+| `/imu/left/data` | `sensor_msgs/msg/Imu`, 약 100 Hz | `imu_left_link`, native quaternion + rad/s + m/s² | EBIMU 원본 자세와 축 점검용 |
+| `/imu/left/data_raw_calibrated` | `sensor_msgs/msg/Imu`, 약 100 Hz | `base_link`, quaternion 없음 | 장착축 회전·gyro bias가 보정된 필터 입력 |
+| `/imu/left/data_calibrated` | `sensor_msgs/msg/Imu`, 약 100 Hz | `base_link`, 보정 quaternion + rad/s + m/s² | 대시보드, 자세 계산, EKF 입력에 권장 |
 | `/scan` | `sensor_msgs/msg/LaserScan`, 약 7.5 Hz | 각도 rad, 거리 m, 보통 1,080 ranges | 유효 range를 XY 점으로 변환 |
 | `/map` | `nav_msgs/msg/OccupancyGrid`, 약 0.5 Hz | 0.05 m/cell, `-1/0..100` | 2D grid, 경로 계획, 장애물 판정 |
 | `/pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | `map` 좌표계의 SLAM pose | 로봇 위치/방향과 공분산 사용 |
@@ -112,9 +120,10 @@ ros2 topic echo --once \
 | `/parameter_events`, `/rosout` | ROS 2 표준 parameter/log 메시지 | 설정 변경과 노드 로그 진단용; 센서 데이터셋에는 보통 기록하지 않음 |
 
 현재 raw 카메라의 `header.frame_id`는 비어 있을 수 있습니다. Depth는
-`camera_optical_frame`, IMU는 `imu_left_link`, LiDAR는 `laser_frame`, 맵은
-`map` frame을 사용합니다. 여러 센서를 합치기 전에 실제 장착 위치와 방향을
-측정하여 올바른 static TF를 추가해야 합니다.
+`camera_optical_frame`, IMU 원본은 `imu_left_link`, 보정 IMU는 `base_link`,
+LiDAR는 `laser_frame`, 맵은 `map` frame을 사용합니다. 여러 센서를 합칠 때는
+각 메시지의 `header.frame_id`를 확인하고, 카메라·LiDAR의 실제 장착 위치에
+맞는 static TF를 사용해야 합니다.
 
 카메라와 Depth의 **ROS 원본 토픽 데이터 자체는 회전하지 않습니다**. 웹
 대시보드와 아래 예제 코드가 현재 장착 방향에 맞춰 표시 단계에서 180도
@@ -212,15 +221,51 @@ z = depth_m[v, u]
 ### 4. UART2 IMU 토픽
 
 ```bash
-ros2 topic hz /imu/left/data
-ros2 topic echo --qos-reliability best_effort \
+# 권장: 장착축과 gyro zero bias가 보정된 base_link 데이터
+ros2 topic hz /imu/left/data_calibrated
+ros2 topic echo --once --qos-reliability best_effort \
+  /imu/left/data_calibrated sensor_msgs/msg/Imu
+
+# 비교/진단: 센서 native 축 원본
+ros2 topic echo --once --qos-reliability best_effort \
   /imu/left/data sensor_msgs/msg/Imu
 ```
 
 `orientation`은 ROS 순서 `(x, y, z, w)`의 quaternion이고,
 `angular_velocity`는 rad/s, `linear_acceleration`은 m/s²입니다.
 `/imu/left/data_raw`은 `orientation_covariance[0] == -1`로 자세가 없음을
-표시하고 `/imu/left/data`에는 정규화 quaternion이 들어갑니다.
+표시하고 `/imu/left/data`에는 정규화 quaternion이 들어갑니다. 같은 규칙이
+두 calibrated 토픽에도 적용됩니다.
+
+`imu` 컨테이너를 시작하거나 재시작할 때 로봇을 **평평한 바닥에 두고 3초
+이상 완전히 정지**시킵니다. 노드는 연속 300개 정지 샘플에서 다음 값을
+계산합니다.
+
+- 평균 가속도 방향을 `base_link`의 `+Z`로 맞추는 장착 회전
+- 정지 상태의 평균 각속도를 이용한 x/y/z gyro zero bias
+- 가속도 norm을 표준 중력 `9.80665 m/s²`에 맞추는 scale
+- 정지 샘플 분산을 회전한 각속도·가속도 covariance
+
+현재처럼 중력이 센서의 `-Y`에 보이는 수직 장착에서는 결과가 대략 X축
+`-90°` 회전이지만, 실제 기울어짐까지 정지 샘플로 계산하므로 각도를 코드에
+고정하지 않습니다. 중력만으로는 yaw를 알 수 없기 때문에
+`left.calibration.yaw_deg` 기본값은 `0.0`입니다. 로봇 정면과 IMU 정면이
+다르면 실측한 yaw 장착각을 `compose.yaml`에 입력해야 합니다.
+
+정지·수평 상태의 calibrated 출력은 다음 범위인지 확인합니다.
+
+```text
+angular_velocity.x/y/z  ≈ 0 rad/s
+linear_acceleration.x/y ≈ 0 m/s²
+linear_acceleration.z   ≈ +9.80665 m/s²
+header.frame_id         = base_link
+```
+
+ROS `sensor_msgs/Imu.linear_acceleration`은 정지해도 중력을 포함하므로 Z가
+0이 아니라 약 `+9.81`인 것이 정상입니다. 이동 가속도만 필요하면 보정
+quaternion으로 중력 벡터를 같은 frame에 표현한 뒤 빼거나, `robot_localization`
+같은 상태 추정기의 중력 제거 옵션을 사용하십시오. 단순히 항상 Z에서 9.81을
+빼면 로봇이 기울었을 때 잘못된 값이 됩니다.
 
 ```python
 import math
@@ -235,10 +280,10 @@ def quaternion_to_rpy(q):
     return roll, pitch, yaw
 ```
 
-IMU 축은 센서의 native axis입니다. 현재 장착 방향을 추측해 바꾸지 않으므로
-실측 static TF와 신뢰 가능한 covariance를 설정하기 전에는 SLAM이나 EKF에
-바로 융합하지 마십시오. 정지 상태에서는 가속도 norm이 약 9.81 m/s²,
-quaternion norm이 약 1인지 확인하는 것이 기본 점검입니다.
+원본 토픽은 센서 native axis를 그대로 유지합니다. 새 알고리즘에는
+`/imu/left/data_calibrated`를 사용하고, 원본은 센서 고장·축 방향·재보정을
+진단할 때 사용하십시오. 두 토픽 모두 정지 상태에서 가속도 norm이 약
+9.81 m/s², quaternion norm이 약 1인지 확인하는 것이 기본 점검입니다.
 
 ### 5. LiDAR `/scan` 토픽
 
@@ -319,7 +364,7 @@ image_sub = node.create_subscription(
 depth_sub = node.create_subscription(
     Image, "/StereoNetNode/stereonet_depth", depth_callback, qos_profile_sensor_data)
 imu_sub = node.create_subscription(
-    Imu, "/imu/left/data", imu_callback, qos_profile_sensor_data)
+    Imu, "/imu/left/data_calibrated", imu_callback, qos_profile_sensor_data)
 scan_sub = node.create_subscription(
     LaserScan, "/scan", scan_callback, qos_profile_sensor_data)
 
@@ -352,7 +397,7 @@ telemetry.addEventListener("open", () => {
   telemetry.send(JSON.stringify({
     op: "subscribe",
     id: "imu",
-    topic: "/imu/left/data",
+    topic: "/imu/left/data_calibrated",
     throttle_rate: 50,
     queue_length: 1,
   }));
@@ -360,7 +405,7 @@ telemetry.addEventListener("open", () => {
 
 telemetry.addEventListener("message", (event) => {
   const envelope = JSON.parse(event.data);
-  if (envelope.op === "publish" && envelope.topic === "/imu/left/data") {
+  if (envelope.op === "publish" && envelope.topic === "/imu/left/data_calibrated") {
     const imu = envelope.msg;
     console.log(imu.orientation, imu.angular_velocity, imu.linear_acceleration);
   }
@@ -401,7 +446,8 @@ docker exec -it rplidar bash -lc '
   ros2 bag record -o /tmp/sensor_bag \
     /image_left_raw /image_right_raw \
     /StereoNetNode/stereonet_depth \
-    /imu/left/data /scan /map /pose /tf /tf_static
+    /imu/left/data /imu/left/data_calibrated \
+    /scan /map /pose /tf /tf_static
 '
 ```
 
@@ -447,13 +493,17 @@ be checked without a GUI.
 
 ## View from a Windows host
 
+호스트에서 바로 실행하는 최소 절차와 연결 오류 해결 방법은
+[Windows 호스트 빠른 시작](README_HOST_WINDOWS.md)을 먼저 참고하십시오.
+
 The `lidar` service also runs `slam_toolbox` and a loopback-only Foxglove
 Bridge. Follow [host_view/README.md](host_view/README.md) to open an SSH tunnel,
 connect to `ws://localhost:8765`, and view the camera, depth, left IMU, LiDAR,
 and 2D occupancy map without installing ROS 2 on the host.
 
-The map is LiDAR scan-matching based. IMU data is viewable but is intentionally
-not fused until its physical mounting transform has been measured.
+The map remains LiDAR scan-matching based. The host dashboard uses the calibrated
+`base_link` IMU stream; SLAM fusion is still disabled until its filter parameters
+and the LiDAR-to-base transform are validated together.
 
 For a no-configuration browser view, run
 `host_view/start_dashboard.ps1 -IdentityFile R:\.ssh\id_ed25519` on Windows,
@@ -485,4 +535,8 @@ The node configures ASCII quaternion output at 100 Hz and accepts only complete
 10-field packets. Quaternion order is converted from the device's Z,Y,X,W to
 ROS X,Y,Z,W; angular velocity is converted from degrees/s to radians/s and
 acceleration from g to m/s^2. `/data_raw` declares orientation unavailable,
-while `/data` contains the normalized quaternion.
+while `/data` contains the normalized quaternion. The original two topics retain
+the native EBIMU axes. After 300 accepted stationary samples, the two
+`*_calibrated` topics publish the measured mounting rotation, gyro-bias removal,
+acceleration scale, and covariance in `base_link`. Calibration is repeated on
+every IMU container start and never consumes UART3.

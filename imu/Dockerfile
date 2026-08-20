@@ -11,6 +11,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY ebimu_ros2_node.py /app/ebimu_ros2_node.py
+COPY calibration_math.py /app/calibration_math.py
 COPY entrypoint.sh /imu_entrypoint.sh
 
 RUN chmod +x /app/ebimu_ros2_node.py /imu_entrypoint.sh

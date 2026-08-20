@@ -65,7 +65,7 @@ function unsubscribeImage(id, topic) {
 
 function subscriptionPlan() {
   return [
-    [0, "imu", "/imu/left/data", 50],
+    [0, "imu", "/imu/left/data_calibrated", 50],
     [150, "scan", "/scan", 200],
     [300, "map", "/map", 500],
     [450, "tf", "/tf", 100],
@@ -226,7 +226,7 @@ function noteRate(key, elementId, label = "") {
 function routeMessage(topic, msg) {
   if (topic === state.cameraTopic) handleCamera(msg);
   else if (topic === "/StereoNetNode/stereonet_depth") handleDepth(msg);
-  else if (topic === "/imu/left/data") handleImu(msg);
+  else if (topic === "/imu/left/data_calibrated") handleImu(msg);
   else if (topic === "/scan") handleScan(msg);
   else if (topic === "/map") handleMap(msg);
   else if (topic === "/tf" || topic === "/tf_static") handleTf(msg);
